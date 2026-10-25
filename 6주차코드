@@ -1,0 +1,346 @@
+let maxUnderwaterSec = 5; // 물속에서 버티는 시간 변수
+let fps = 60;             
+let hitRadius = 25; // 비행기 충돌 판정
+let hitShake = 30; // 충돌 시 흔들리는 시간
+let seaLevel = 320; // 바다수면
+let underwaterTimer = 0; // 비행기 물 속 누적 시간
+let waveOffset = 0; // 파도
+
+// 비행기
+let planeX = 0;           
+let planeY = 0;          
+let lives = 5;            
+let shakeTime = 0; // 현재 남은 화면 흔들림 시간
+
+// 장애물
+let numObs = 5;           
+let obsX = [];            
+let obsY = [];           
+let obsSpeed = [];     
+
+// 구름 
+let numClouds = 15;       
+let cloudX = [];         
+let cloudY = [];          
+
+
+// 물리 변수
+let dashVx = 0; // 가속도
+let dashVy = 0;           
+let friction = 0.85; // 마찰력
+
+// 드론
+let droneX = 800;         
+let droneY = 150;        
+let droneAlive = true; // 드론 생존 여부
+
+// 미사일
+let numMissiles = 5; 
+let misX = [];            
+let misY = [];           
+let misActive = []; 
+
+
+
+function setup() {
+  createCanvas(700, 400); 
+
+  for (let i = 0; i < numObs; i++) {       
+    obsX[i] = random(width, width + 500);
+    obsY[i] = random(0, seaLevel - 30);   
+    obsSpeed[i] = random(4, 8);          
+  }
+
+  for (let i = 0; i < numClouds; i++) {   
+    cloudX[i] = random(0, width);            
+    cloudY[i] = random(0, seaLevel - 50); 
+  }
+
+  // 미사일 반복문
+  for (let i = 0; i < numMissiles; i++) {
+    misActive[i] = false; 
+  }
+}
+
+
+function draw() {
+  // 게임 오버 
+  if (checkGameOver()) {
+    background(0);
+    fill(255, 0, 0);
+    textSize(50);
+    textAlign(CENTER, CENTER);
+    text("YOU DIED", width/2, height/2);
+    return; 
+  }
+
+  // 게임 오버 아닐시
+  drawSkyAndSea(); 
+  drawPlane();
+  drawMissiles();   
+  drawDrone();      
+  drawObstacles(); 
+  checkCollision(); 
+  checkUnderwater(); 
+  drawLives(); 
+}
+
+
+function drawSkyAndSea() {
+  // 비행기가 물속에 빠지면
+  if (planeY > seaLevel) background(255, 180, 180);     
+  else background(135, 206, 235);    
+
+  // 구름
+  fill(255, 255, 255, 200);                     
+  for (let i = 0; i < numClouds; i++) {    
+    drawCustomCloud(cloudX[i], cloudY[i]); 
+    cloudX[i] -= 2; 
+    if (cloudX[i] < -30) {                 
+      cloudX[i] = width + 30;                     
+      cloudY[i] = random(20, seaLevel - 50); 
+    }
+  }
+
+  // 산
+  noStroke();                      
+  fill(34, 139, 34);     
+  triangle(-50, seaLevel, 100, 150, 300, seaLevel); 
+  fill(255);
+  triangle(65, 189, 100, 150, 146, 189); 
+
+  fill(24, 120, 24); 
+  triangle(150, seaLevel, 350, 100, 550, seaLevel); 
+  fill(255);
+  triangle(290, 175, 350, 100, 410, 175);
+
+  fill(34, 139, 34); 
+  triangle(400, seaLevel, 600, 150, 800, seaLevel); 
+  fill(255);
+  triangle(550, 187, 600, 150, 650, 187);
+
+  // 바다에 빠질 시
+  if (planeY > seaLevel) fill(255, 130, 130);  
+  // 바다에서 나올 시
+  else fill(0, 105, 148);             
+
+  // 파도
+  beginShape();                    
+  vertex(0, height);                
+  for (let x = 0; x <= width; x += 10) {  
+    let waveY = seaLevel + sin(x * 0.1 + waveOffset) * 10; 
+    vertex(x, waveY);  
+  }
+  vertex(width, height);  
+  endShape(CLOSE); 
+  
+  waveOffset += 0.05; // 파도 움직임 속도
+}
+
+function drawPlane() {
+  planeX += (mouseX - planeX) * 0.1; 
+  planeY += (mouseY - planeY) * 0.1; 
+
+  // 비행기 물리법칙 부여
+  let mouseSpeed = dist(pmouseX, pmouseY, mouseX, mouseY);
+  
+  if (mouseSpeed > 40) {
+    dashVx = (mouseX - pmouseX) * 0.8; 
+    dashVy = (mouseY - pmouseY) * 0.8;
+  }
+
+  // 비행기 원래 속도로 되돌리기
+  dashVx *= friction; 
+  dashVy *= friction; 
+  planeX += dashVx; // 실제 좌표에 가속도를 누적 더하기
+  planeY += dashVy;
+
+  // 피격 시
+  if (shakeTime > 0) { 
+    planeX += random(-5, 5); 
+    planeY += random(-5, 5); 
+    shakeTime--; 
+  }
+
+  //비행기 형태
+  noStroke();  
+  
+  fill(150);
+  triangle(planeX + 5, planeY + 5, planeX - 15, planeY - 15, planeX + 15, planeY);
+  fill(220);   
+  rect(planeX, planeY, 50, 15, 8); 
+  fill(100, 200, 255);
+  arc(planeX + 35, planeY, 20, 15, PI, 0);
+
+}
+
+// 미사일 발사
+function drawMissiles() {
+  if (frameCount % 10 === 0) { 
+    for (let i = 0; i < numMissiles; i++) {
+      if (misActive[i] == false) { 
+        misX[i] = planeX + 50; 
+        misY[i] = planeY + 7;
+        misActive[i] = true;   
+        break; 
+      }
+    }
+  }
+
+  strokeWeight(2);
+
+  for (let i = 0; i < numMissiles; i++) {
+    if (misActive[i] == true) { 
+      misX[i] += 15; 
+      stroke(255, 50, 0);
+      fill(255, 255, 0);
+      ellipse(misX[i], misY[i], 20, 6); 
+      
+      let hitSomething = false; 
+
+      // 드론 격추
+      if (droneAlive && checkTargetHit(misX[i], misY[i], droneX, droneY, 25)) {
+        droneAlive = false;  
+        hitSomething = true;
+      }
+      
+      // 장애물 격추 
+      if (hitSomething == false) {
+        for (let j = 0; j < numObs; j++) {
+          if (checkTargetHit(misX[i], misY[i], obsX[j], obsY[j], 25)) {
+            obsX[j] = random(width, width + 200); 
+            obsY[j] = random(0, seaLevel - 30); 
+            hitSomething = true;
+            break; 
+          }
+        }
+      }
+      if (hitSomething || misX[i] > width) {
+        misActive[i] = false; 
+      }
+    }
+  }
+}
+
+
+function drawDrone() {
+  if (droneAlive) {
+    droneX += (planeX - droneX) * 0.02 + random(-4, 4);
+    droneY += (planeY - droneY) * 0.02 + random(-4, 4);
+
+    // 드론 모양
+    fill(80);
+    noStroke();
+    rectMode(CENTER);
+    rect(droneX, droneY, 35, 20, 5); 
+    rectMode(CORNER);
+    
+    fill(255, 0, 0); 
+    ellipse(droneX - 8, droneY, 10, 10);
+  
+    // 프로펠러
+    stroke(200);
+    strokeWeight(3);
+    let rotorWidth = cos(frameCount * 2) * 40; 
+    line(droneX - rotorWidth, droneY - 15, droneX + rotorWidth, droneY - 15);
+    line(droneX, droneY - 10, droneX, droneY - 15); 
+  } else {
+    if (frameCount % 300 === 0) {
+      droneAlive = true;
+      droneX = width + 50;
+      droneY = random(50, seaLevel - 50);
+    }
+  }
+}
+
+// 장애물
+function drawObstacles() {
+  for (let i = 0; i < numObs; i++) {     
+    stroke(150);
+    strokeWeight(3);
+    line(obsX[i] - 18, obsY[i], obsX[i] + 18, obsY[i]); 
+    line(obsX[i], obsY[i] - 18, obsX[i], obsY[i] + 18); 
+    line(obsX[i] - 12, obsY[i] - 12, obsX[i] + 12, obsY[i] + 12); 
+    line(obsX[i] - 12, obsY[i] + 12, obsX[i] + 12, obsY[i] - 12); 
+
+    fill(50);                   
+    noStroke();
+    ellipse(obsX[i], obsY[i], 30, 30); 
+    
+    fill(255, 50, 50);
+    ellipse(obsX[i], obsY[i], 12, 12); 
+
+    obsX[i] -= obsSpeed[i]; 
+
+    if (obsX[i] < -20) {                 
+      obsX[i] = random(width, width + 200); 
+      obsY[i] = random(0, seaLevel - 30); 
+      obsSpeed[i] = random(5, 10);    
+    }
+  }
+}
+
+// 비행기 충돌 판정
+function checkCollision() {
+  for (let i = 0; i < numObs; i++) { 
+    if (checkTargetHit(planeX + 25, planeY + 7, obsX[i], obsY[i], hitRadius)) {      
+      lives--;                    
+      shakeTime = hitShake;       
+      obsX[i] = random(width, width + 200);
+      obsY[i] = random(0, seaLevel - 30); 
+    }
+  }
+
+  if (droneAlive) {
+    if (checkTargetHit(planeX + 25, planeY + 7, droneX, droneY, hitRadius + 5)) {
+      lives--;
+      shakeTime = hitShake;
+      droneAlive = false;        
+    }
+  }
+}
+
+function checkUnderwater() {
+  if (planeY > seaLevel) {          
+    underwaterTimer++; 
+   
+    if (underwaterTimer >= maxUnderwaterSec * fps) { 
+      lives--;  
+      shakeTime = hitShake; 
+      underwaterTimer = 0;
+    }
+
+    let timeLeft = maxUnderwaterSec - floor(underwaterTimer / fps); 
+    fill(255, 50, 50);             
+    textSize(30);                      
+    textAlign(CENTER, TOP);            
+    text("빠져나오십시오!! " + timeLeft + " 초!", width/2, 20); 
+  } else {                                     
+    underwaterTimer = 0;               
+  }
+}
+
+// 목숨
+function drawLives() {
+  fill(255, 255, 0);       
+  noStroke();              
+  textSize(20);            
+  textAlign(LEFT, TOP);    
+  text("목숨: " + lives, 20, 20); 
+}
+
+function drawCustomCloud(cx, cy) {
+  noStroke();
+  ellipse(cx, cy, 40, 25);
+  ellipse(cx - 15, cy + 5, 25, 20);
+  ellipse(cx + 15, cy + 5, 25, 20);
+}
+
+function checkGameOver() {
+  return lives <= 0;
+}
+
+function checkTargetHit(objX, objY, targetX, targetY, rad) {
+  let distance = dist(objX, objY, targetX, targetY);
+  return distance < rad;
+}
