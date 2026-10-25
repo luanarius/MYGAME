@@ -1,0 +1,536 @@
+// 미디어 변수 
+let bgm; 
+let gameOverSoundPlayed = false; // 게임오버 사운드 중복 재생 방지
+let gameClearSoundPlayed = false; // 클리어 사운드 중복 재생 방지
+let rocketImg; 
+let droneImg; 
+let shootSound; 
+let burstImg; 
+let clapSound;
+
+// 게임 상태 관리 변수
+let step = 0; // 화면 상태 (0: 시작화면, 1: 게임중, 2: 게임오버, 3: 게임클리어)
+let isPaused = false; // 일시정지 여부
+let score = 0; 
+let level = 1; 
+
+// 폭발 효과 
+let numExp = 5; 
+let expX = []; 
+let expY = []; 
+let expTimer = []; 
+let expActive = []; 
+
+// 게임 물리엔진 
+let maxUnderwaterSec = 5; // 생존 시간
+let fps = 60; 
+let hitRadius = 25; // 충돌 판정 기준 
+let hitShake = 30; 
+let seaLevel = 320; 
+let underwaterTimer = 0; 
+let waveOffset = 0; 
+let gravity = 0.25; 
+
+// 전투기
+let planeX = 100; 
+let planeY = 150; 
+let lives = 5; 
+let shakeTime = 0;
+let dashVx = 0;
+let dashVy = 0; 
+let friction = 0.85; 
+
+// 장애물
+let numObs = 5; 
+let obsX = []; 
+let obsY = []; 
+let obsSpeed = []; 
+let numClouds = 15; 
+let cloudX = []; 
+let cloudY = []; 
+
+// [7] 적 드론(UFO) 변수
+let droneX = 800; // 드론 X 좌표
+let droneY = 150; // 드론 Y 좌표
+let droneAlive = true; // 드론 생존 여부 (false면 파괴됨)
+
+// [8] 미사일 배열 변수
+let numMissiles = 5; // 동시에 쏠 수 있는 최대 미사일 개수
+let misX = []; // 미사일 X 좌표
+let misY = []; // 미사일 Y 좌표
+let misActive = []; // 미사일 활성화 여부 (true면 날아가는 중)
+
+// ------------------------------------------------
+
+// setup() 앞에 async를 붙여 최신 p5.js 버전의 이미지 로딩 버그를 해결했습니다.
+async function setup() {
+  createCanvas(700, 400); 
+
+  // await를 사용하여 이미지가 완전히 불러와질 때까지 대기
+  rocketImg = await loadImage('data/rocket0.png');
+  droneImg = await loadImage('data/enemy.png'); 
+  burstImg = await loadImage('data/burst.png'); 
+
+  // p5.sound 라이브러리 충돌을 막기 위해 웹 표준 오디오(new Audio) 사용
+  bgm = new Audio('data/사운드_이미지_latin.mp3');
+  bgm.loop = true; // 무한 반복 재생
+  bgm.volume = 0.5; // 볼륨 50%
+
+  shootSound = new Audio('data/사운드_이미지_burst.mp3');
+  shootSound.volume = 0.6; 
+
+  clapSound = new Audio('data/사운드_이미지_claps.mp3');
+  clapSound.volume = 0.8;
+
+  // 랜덤요소
+  for (let i = 0; i < numObs; i++) {       
+    obsX[i] = random(width, width + 500);
+    obsY[i] = random(0, seaLevel - 30);   
+    obsSpeed[i] = random(4, 8);          
+  }
+  for (let i = 0; i < numClouds; i++) {   
+    cloudX[i] = random(0, width);            
+    cloudY[i] = random(0, seaLevel - 50); 
+  }
+  for (let i = 0; i < numMissiles; i++) {
+    misActive[i] = false; 
+  }
+  for (let i = 0; i < numExp; i++) {
+    expActive[i] = false;
+  }
+}
+
+function draw() {
+  if (step === 0) {
+    drawStartScreen(); // 시작 화면
+  } else if (step === 1) {
+    playGame(); // 게임 플레이 화면
+  } else if (step === 2) {
+    drawGameOverScreen(); // 패배 화면
+  } else if (step === 3) {
+    drawGameClearScreen(); // 승리 화면
+  }
+}
+
+// 시작 화면 
+function drawStartScreen() {
+  background(20, 30, 60);
+  fill(255);
+  textAlign(CENTER, CENTER);
+  textSize(45);
+  text(" ACE COMBAT ", width / 2, height / 2 - 30);
+  
+  textSize(20);
+  fill(255, 255, 0);
+  text("화면을 마우스로 클릭하여 게임 시작", width / 2, height / 2 + 30); 
+}
+
+// 패배 화면
+function drawGameOverScreen() {
+  background(0);
+  fill(255, 0, 0);
+  textSize(50);
+  textAlign(CENTER, CENTER);
+  text("YOU DIED", width/2, height/2);
+
+  fill(255);
+  textSize(20);
+  text("마우스를 클릭하여 재시작", width/2, height/2 + 30);
+}
+
+// 승리 화면 
+function drawGameClearScreen() {
+  background(0, 50, 100);
+  fill(255, 215, 0);
+  textSize(50);
+  textAlign(CENTER, CENTER);
+  text(" Congratulations! ", width/2, height/2 - 20);
+
+  fill(255);
+  textSize(20);
+  text("모든 단계를 클리어했습니다!", width/2, height/2 + 30);
+  text("마우스를 클릭하여 처음부터 다시 시작", width/2, height/2 + 60);
+}
+
+function playGame() {
+  if (checkGameOver()) {
+    step = 2; // 게임오버 상태
+    if (gameOverSoundPlayed === false) {
+      bgm.pause(); 
+      gameOverSoundPlayed = true; 
+    }
+    return; 
+  }
+
+  // 승리조건
+  if (level > 5) {
+    step = 3; // 클리어 상태로 변경
+    if (gameClearSoundPlayed === false) {
+      bgm.pause(); 
+      if (clapSound) {
+        clapSound.currentTime = 0;
+        clapSound.play(); 
+      }
+      gameClearSoundPlayed = true;
+    }
+    return;
+  }
+
+  score += 1;
+  level = 1 + floor(score / 600); 
+
+  drawSkyAndSea(); // 배경
+  drawPlane(); // 플레이어
+  drawMissiles(); // 미사일
+  drawDrone(); // 적 UFO
+  drawObstacles(); // 장애물 로켓
+  checkCollision(); // 플레이어 충돌 검사
+  checkUnderwater(); // 잠수 시간 검사
+  
+  drawExplosions(); // 폭발 이펙트 렌더링
+  drawUI(); // 점수 및 목숨 UI
+}
+
+// 배경
+function drawSkyAndSea() {
+  if (planeY > seaLevel) background(255, 180, 180);     
+  else background(135, 206, 235);    
+
+  if (planeY > seaLevel) fill(255, 130, 130);  
+  else fill(0, 105, 148);             
+
+  beginShape();                    
+  vertex(0, height);                
+  for (let x = 0; x <= width; x += 10) {  
+    let waveY = seaLevel + sin(x * 0.1 + waveOffset) * 10; 
+    vertex(x, waveY);  
+  }
+  vertex(width, height);  
+  endShape(CLOSE); 
+  
+  waveOffset += 0.05; // 파도를 이동시킴
+}
+
+function drawPlane() {
+  if (keyIsDown(LEFT_ARROW)) dashVx -= 1.5;   
+  if (keyIsDown(RIGHT_ARROW)) dashVx += 1.5; 
+  if (keyIsDown(UP_ARROW)) dashVy -= 1.5;    
+  if (keyIsDown(DOWN_ARROW)) dashVy += 1.5;  
+
+  dashVy += gravity;
+
+  dashVx *= friction; 
+  dashVy *= friction; 
+  planeX += dashVx; 
+  planeY += dashVy;
+
+  planeX = constrain(planeX, 30, width - 30);
+  planeY = constrain(planeY, 20, height - 20);
+
+  // 피격여부
+  let isHit = false; 
+  if (shakeTime > 0) { 
+    planeX += random(-5, 5); 
+    planeY += random(-5, 5); 
+    shakeTime--; 
+    isHit = true; 
+  }
+
+  // 좌표계
+  push(); 
+  translate(planeX, planeY); 
+  noStroke();
+  
+  if (!isHit) {
+    fill(255, random(100, 200), 0); 
+    let flameSize = keyIsDown(RIGHT_ARROW) ? random(20, 35) : random(10, 15);
+    triangle(0, 5, 0, 15, -flameSize, 10);
+  }
+
+  fill(isHit ? color(200, 0, 0) : color(100)); 
+  triangle(15, 10, 35, -15, 45, 10); // 날개 1
+  triangle(15, 10, 30, 25, 40, 10);  // 날개 2
+
+  fill(isHit ? color(180, 0, 0) : color(80));
+  triangle(5, 10, 15, -5, 20, 10); // 꼬리날개
+
+  fill(isHit ? color(255, 50, 50) : color(200));
+  ellipse(25, 10, 60, 18); // 동체
+
+  fill(isHit ? color(255, 100, 100) : color(135, 206, 250)); 
+  ellipse(35, 5, 20, 8); // 조종석 창문
+  
+  fill(isHit ? color(150, 0, 0) : color(50));
+  ellipse(53, 10, 8, 12); // 기수(코 부분)
+
+  pop(); // 좌표계 복구
+}
+
+// 미사일
+function drawMissiles() {
+  strokeWeight(2);
+  for (let i = 0; i < numMissiles; i++) {
+    if (misActive[i] == true) { 
+      misX[i] += 15; 
+      stroke(255, 50, 0);
+      fill(255, 255, 0);
+      ellipse(misX[i], misY[i], 20, 6); 
+      
+      let hitSomething = false; 
+
+      // 충돌 코드
+      if (droneAlive && checkTargetHit(misX[i], misY[i], droneX, droneY, 25)) {
+        for (let k = 0; k < numExp; k++) {
+          if (expActive[k] == false) {
+            expX[k] = droneX;
+            expY[k] = droneY;
+            expTimer[k] = 24; // 폭발 유지시간 0.4초(24프레임)
+            expActive[k] = true;
+            break;
+          }
+        }
+        droneAlive = false; // 드론 파괴
+        hitSomething = true;
+      }
+      
+      // 충돌 검사
+      if (hitSomething == false) {
+        for (let j = 0; j < numObs; j++) {
+          if (checkTargetHit(misX[i], misY[i], obsX[j], obsY[j], 25)) {
+            // 빈 폭발 배열 찾기
+            for (let k = 0; k < numExp; k++) {
+              if (expActive[k] == false) {
+                expX[k] = obsX[j];
+                expY[k] = obsY[j];
+                expTimer[k] = 24;
+                expActive[k] = true;
+                break;
+              }
+            }
+            // 맞은 장애물 후처리
+            obsX[j] = random(width, width + 200); 
+            obsY[j] = random(0, seaLevel - 30); 
+            hitSomething = true;
+            break; 
+          }
+        }
+      }
+      // 미사일이 무언가를 맞췄거나 화면 밖으로 나갔으면 비활성화
+      if (hitSomething || misX[i] > width) {
+        misActive[i] = false; 
+      }
+    }
+  }
+}
+
+// 드론
+function drawDrone() { 
+  if (droneAlive) {
+    let trackingSpeed = 1 + (level * 0.5); 
+
+    if (droneX < planeX) droneX += trackingSpeed;
+    if (droneX > planeX) droneX -= trackingSpeed;
+    if (droneY < planeY) droneY += trackingSpeed;
+    if (droneY > planeY) droneY -= trackingSpeed;
+
+    droneX += random(-4, 4);
+    droneY += random(-4, 4);
+    
+    image(droneImg, droneX - 25, droneY - 20, 50, 40);
+  } else {
+    // 드론이 파괴되었을 때 약 5초 뒤에 새로운 드론 생성
+    if (frameCount % 300 === 0) {
+      droneAlive = true;
+      droneX = width + 50;
+      droneY = random(50, seaLevel - 50);
+    }
+  }
+}
+
+// 일반 장애물
+function drawObstacles() { 
+  for (let i = 0; i < numObs; i++) {     
+    image(rocketImg, obsX[i] - 25, obsY[i] - 15, 50, 30);
+
+    obsX[i] -= (obsSpeed[i] + (level * 1.5)); 
+
+    if (obsX[i] < -50) { 
+      obsX[i] = random(width, width + 200); 
+      obsY[i] = random(0, seaLevel - 30); 
+      obsSpeed[i] = random(5, 10);    
+    }
+  }
+}
+
+// 폭발 이펙트
+function drawExplosions() {
+  for (let i = 0; i < numExp; i++) {
+    if (expActive[i] == true) {
+      image(burstImg, expX[i] - 30, expY[i] - 30, 60, 60);
+      expTimer[i]--; 
+      
+      if (expTimer[i] <= 0) {
+        expActive[i] = false; 
+      }
+    }
+  }
+}
+
+// 플레이어 피격 검사
+function checkCollision() { 
+  for (let i = 0; i < numObs; i++) { 
+    if (checkTargetHit(planeX + 25, planeY + 10, obsX[i], obsY[i], hitRadius)) {      
+      lives--;                    
+      shakeTime = hitShake;       
+      obsX[i] = random(width, width + 200); 
+      obsY[i] = random(0, seaLevel - 30); 
+    }
+  }
+  if (droneAlive) {
+    if (checkTargetHit(planeX + 25, planeY + 10, droneX, droneY, hitRadius + 5)) {
+      lives--;
+      shakeTime = hitShake;
+      droneAlive = false;    
+    }
+  }
+}
+
+// 물속에 빠진 시간 체크 
+function checkUnderwater() { 
+  if (planeY > seaLevel) {          
+    underwaterTimer++; 
+    
+    if (underwaterTimer >= maxUnderwaterSec * fps) { 
+      lives--;  
+      shakeTime = hitShake; 
+      underwaterTimer = 0; 
+    }
+    let timeLeft = maxUnderwaterSec - floor(underwaterTimer / fps); 
+    fill(255, 50, 50);             
+    textSize(30);                      
+    textAlign(CENTER, TOP);            
+    text("빠져나오십시오!! " + timeLeft + " 초!", width/2, 20); 
+  } else {                                     
+    underwaterTimer = 0;             
+  }
+}
+
+function drawUI() { 
+  fill(255, 0, 0);       
+  noStroke();              
+  textSize(20);            
+  textAlign(LEFT, TOP);    
+  text("목숨: " + lives, 20, 20); 
+
+  fill(255, 255, 0);
+  textAlign(CENTER, TOP);
+  textSize(25);
+  text("LEVEL " + level + " / 5", width / 2, 50); 
+
+  fill(255);
+  textAlign(RIGHT, TOP);
+  textSize(20);
+  text("점수: " + score, width - 20, 20);
+}
+
+function keyPressed() {
+  if (step === 1) { 
+    if (key === ' ' && !checkGameOver()) { 
+      for (let i = 0; i < numMissiles; i++) {
+        if (misActive[i] == false) { 
+          misX[i] = planeX + 55; 
+          misY[i] = planeY + 10;
+          misActive[i] = true;   
+        
+          if (shootSound) {
+            shootSound.currentTime = 0; 
+            shootSound.play();
+          }
+          break; // 1발만 쏘고 반복문 종료
+        }
+      }
+    }
+    
+    if (keyCode === ESCAPE && !checkGameOver()) {
+        isPaused = !isPaused; 
+        if (isPaused) {
+          noLoop(); 
+          bgm.pause(); 
+        } else {
+          loop(); 
+          bgm.play(); 
+        }
+    }
+  }
+}
+
+// 마우스 클릭 시 
+function mousePressed() {
+  if (step === 0) {
+    step = 1;
+    bgm.play(); 
+    return;
+  }
+
+  // 게임 오버(2)이거나 클리어(3) 상태일 때 클릭하면 리셋
+  if (step === 2 || step === 3) { 
+    resetGame(); 
+  }
+}
+
+// 재시작 시 모든 변수를 초기 상태로 되돌리는 함수
+function resetGame() {
+  lives = 5;                
+  planeX = 100;             
+  planeY = 150;
+  dashVx = 0;               
+  dashVy = 0;
+  shakeTime = 0;            
+  underwaterTimer = 0;      
+  isPaused = false;         
+  
+  score = 0;
+  level = 1;
+  
+  // 폭발 효과 배열 비우기
+  for (let i = 0; i < numExp; i++) {
+    expActive[i] = false;
+  }
+
+  droneAlive = true;        
+  droneX = width + 50;      
+  
+  // 장애물 재배치
+  for (let i = 0; i < numObs; i++) {
+    obsX[i] = random(width, width + 500);
+    obsY[i] = random(0, seaLevel - 30);
+  }
+  
+  // 날아가던 미사일 제거
+  for (let i = 0; i < numMissiles; i++) {
+    misActive[i] = false;
+  }
+  
+  // 사운드 중복 방지 
+  gameOverSoundPlayed = false; 
+  gameClearSoundPlayed = false;
+  if (clapSound) {
+    clapSound.pause();
+  }
+
+  step = 1; // 게임 상태로 복구
+  bgm.currentTime = 0; 
+  bgm.play(); 
+
+  loop(); 
+}
+
+function checkGameOver() { 
+  return lives <= 0; 
+}
+
+// 사이의 거리를 계산
+function checkTargetHit(objX, objY, targetX, targetY, rad) {
+  let distance = dist(objX, objY, targetX, targetY);
+  return distance < rad;
+}
